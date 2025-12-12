@@ -1,4 +1,4 @@
-name: CI/CD для MedDose
+name: workflow_
 
 on:
   push:

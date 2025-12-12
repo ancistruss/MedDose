@@ -34,7 +34,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: v${{ github.run_number }}
-          release_name: "MedDose Release #${{ github.run_number }}"
+          release_name: "MedDose Release"
           body: |
             Автоматичний реліз MedDose
             Автор: $GITHUB_ACTOR

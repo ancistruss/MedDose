@@ -7,72 +7,70 @@ on:
       - master
 
 jobs:
-  build_and_release:
+  pipeline:
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Checkout repository
+      - name: Fetch repository
         uses: actions/checkout@v4
 
-      - name: Show last commit info
+      - name: Commit metadata
         run: |
-          echo "Last commit info:"
-          git --no-pager log -1 --pretty=format:"Hash: %H%nAuthor: %an <%ae>%nDate: %ad%nSubject: %s"
-          echo "GITHUB_ACTOR: $GITHUB_ACTOR"
+          echo "=== Commit metadata ==="
+          git log -1 --pretty="Format:%nAuthor: %an%nEmail: %ae%nMessage: %s%nDate: %ad"
+          echo "Triggered by: $GITHUB_ACTOR"
 
-      - name: Setup Python
+      - name: Initialize Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install Python packages
         run: |
-          if [ -f requirements.txt ]; then
+          if [ -f "requirements.txt" ]; then
+            echo "Installing dependencies..."
             pip install -r requirements.txt
           else
-            echo "requirements.txt not found, skipping"
+            echo "No requirements.txt found"
           fi
 
-      - name: Run MedDose (test run)
-        run: |
-          python app.py || true
-        continue-on-error: true
+      - name: Quick application check
+        run: python app.py || echo "App run check finished"
 
-      - name: Package release artifacts
+      - name: Create distributive archive
         run: |
-          ZIP_NAME="MedDose-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}.zip"
-          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
-          zip -r "$ZIP_NAME" . -x "*.git*"
+          FILE_NAME="MedDose_build_${GITHUB_RUN_NUMBER}_${GITHUB_SHA::6}.zip"
+          echo "ARCHIVE_NAME=$FILE_NAME" >> $GITHUB_ENV
+          zip -r "$FILE_NAME" . -x "*.git*" "*.github*"
 
-      - name: Upload artifact
+      - name: Save build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: meddose-zip
-          path: ${{ env.ZIP_NAME }}
+          name: meddose-package
+          path: ${{ env.ARCHIVE_NAME }}
 
-      - name: Create GitHub Release
-        id: create_release
+      - name: Generate release
+        id: mkrel
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: release-${{ github.run_number }}-${{ github.sha }}
-          release_name: MedDose Release
+          tag_name: "meddose-${{ github.run_number }}"
+          release_name: "MedDose Build #${{ github.run_number }}"
           body: |
-            Автоматичний реліз MedDose  
-            Commit: ${{ github.sha }}
-            Branch: ${{ github.ref }}
+            Автоматичний реліз MedDose.
+            Автор коміту: ${{ github.actor }}
+            Хеш: ${{ github.sha }}
           draft: false
-          prerelease: false
 
-      - name: Upload release asset
+      - name: Upload distributive to release
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ env.ZIP_NAME }}
-          asset_name: ${{ env.ZIP_NAME }}
+          upload_url: ${{ steps.mkrel.outputs.upload_url }}
+          asset_path: ${{ env.ARCHIVE_NAME }}
+          asset_name: ${{ env.ARCHIVE_NAME }}
           asset_content_type: application/zip

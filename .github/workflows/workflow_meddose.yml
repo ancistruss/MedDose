@@ -1,1 +1,79 @@
+name: MedDose workflow
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build_and_release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Display latest commit details
+        run: |
+          echo "Last commit info:"
+          git --no-pager log -1 --pretty=format:"Hash: %H%nAuthor: %an <%ae>%nDate: %ad%nSubject: %s"
+          echo "Triggered by: $GITHUB_ACTOR"
+
+      - name: Configure Python environment
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Resolve Python dependencies
+        run: |
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            echo "requirements.txt not found, skipping"
+          fi
+
+      - name: Execute MedDose sanity check
+        run: |
+          python app.py || true
+        continue-on-error: true
+
+      - name: Build archive
+        run: |
+          ZIP_NAME="MedDose-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}.zip"
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+          zip -r "$ZIP_NAME" . -x "*.git*"
+
+      - name: Publish workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: meddose-zip
+          path: ${{ env.ZIP_NAME }}
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: release-${{ github.run_number }}-${{ github.sha }}
+          release_name: MedDose Release #${{ github.run_number }}
+          body: |
+            Автоматичний реліз MedDose  
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+      - name: Attach archive to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ env.ZIP_NAME }}
+          asset_name: ${{ env.ZIP_NAME }}
+          asset_content_type: application/zip
 

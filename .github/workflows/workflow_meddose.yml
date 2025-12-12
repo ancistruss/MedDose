@@ -1,76 +1,85 @@
-name: MedDose workflow
+name: MedDose_Workflow
 
 on:
   push:
     branches:
-      - main
-      - master
 
 jobs:
-  pipeline:
-    runs-on: ubuntu-latest
+  build_release_job:
+    runs-on: windows-latest
     permissions:
       contents: write
 
     steps:
-      - name: Fetch repository
+      - name: Retrieve repository
         uses: actions/checkout@v4
 
-      - name: Commit metadata
+      - name: Display commit data
+        shell: powershell
         run: |
-          echo "=== Commit metadata ==="
-          git log -1 --pretty="Format:%nAuthor: %an%nEmail: %ae%nMessage: %s%nDate: %ad"
-          echo "Triggered by: $GITHUB_ACTOR"
+          Write-Host "Commit information:"
+          git --no-pager log -1 --pretty=format:"Hash: %H`nAuthor: %an <%ae>`nDate: %ad`nMessage: %s"
+          Write-Host "Workflow triggered by: $env:GITHUB_ACTOR"
 
-      - name: Initialize Python
+      - name: Setup Python runtime
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.x'
 
-      - name: Install Python packages
+      - name: Execute installer script
+        shell: powershell
         run: |
-          if [ -f "requirements.txt" ]; then
-            echo "Installing dependencies..."
-            pip install -r requirements.txt
-          else
-            echo "No requirements.txt found"
-          fi
+          if (Test-Path demoinstaller\installer.bat) {
+            Push-Location demoinstaller
+            .\installer.bat
+            $exit = $LASTEXITCODE
+            Pop-Location
+            if ($exit -ne 0) { Write-Host "installer.bat exited with code $exit" }
+          } else {
+            Write-Host "Installer script was not found"
+          }
 
-      - name: Quick application check
-        run: python app.py || echo "App run check finished"
-
-      - name: Create distributive archive
+      - name: Build release package
+        shell: powershell
         run: |
-          FILE_NAME="MedDose_build_${GITHUB_RUN_NUMBER}_${GITHUB_SHA::6}.zip"
-          echo "ARCHIVE_NAME=$FILE_NAME" >> $GITHUB_ENV
-          zip -r "$FILE_NAME" . -x "*.git*" "*.github*"
+          $short = $env:GITHUB_SHA.Substring(0,7)
+          $zipName = "MedDosePackage-$($env:GITHUB_RUN_NUMBER)-$short.zip"
 
-      - name: Save build artifact
+          $exeFiles = Get-ChildItem -Path . -Recurse -Filter *.exe | Select-Object -ExpandProperty FullName
+
+          $paths = @("code\*", "demoinstaller\*") + $exeFiles
+
+          Compress-Archive -Path $paths -DestinationPath $zipName -Force
+
+          Add-Content -Path $env:GITHUB_ENV -Value ("ZIP_NAME=$zipName")
+
+      - name: Store artifact
         uses: actions/upload-artifact@v4
         with:
-          name: meddose-package
-          path: ${{ env.ARCHIVE_NAME }}
+          name: MedDose-artifact
+          path: ${{ env.ZIP_NAME }}
 
-      - name: Generate release
-        id: mkrel
+      - name: Generate GitHub Release
+        id: release_step
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: "meddose-${{ github.run_number }}"
-          release_name: "MedDose Build #${{ github.run_number }}"
+          tag_name: release-${{ github.run_number }}-${{ github.sha }}
+          release_name: MedDose Release #${{ github.run_number }}
           body: |
-            Автоматичний реліз MedDose.
-            Автор коміту: ${{ github.actor }}
-            Хеш: ${{ github.sha }}
+            Автоматично створений реліз.
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref }}
           draft: false
+          prerelease: false
 
-      - name: Upload distributive to release
+      - name: Upload package to Release
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.mkrel.outputs.upload_url }}
-          asset_path: ${{ env.ARCHIVE_NAME }}
-          asset_name: ${{ env.ARCHIVE_NAME }}
+          upload_url: ${{ steps.release_step.outputs.upload_url }}
+          asset_path: ${{ env.ZIP_NAME }}
+          asset_name: ${{ env.ZIP_NAME }}
           asset_content_type: application/zip

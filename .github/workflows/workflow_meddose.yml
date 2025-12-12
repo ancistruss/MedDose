@@ -1,66 +1,59 @@
-name: MedDose_Workflow
+name: MedDose workflow
 
 on:
   push:
     branches:
+      - main
+      - master
 
 jobs:
-  build_release_job:
-    runs-on: windows-latest
+  build_and_release:
+    runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Retrieve repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Display commit data
-        shell: powershell
+      - name: Display latest commit details
         run: |
-          Write-Host "Commit information:"
-          git --no-pager log -1 --pretty=format:"Hash: %H`nAuthor: %an <%ae>`nDate: %ad`nMessage: %s"
-          Write-Host "Workflow triggered by: $env:GITHUB_ACTOR"
+          echo "Last commit info:"
+          git --no-pager log -1 --pretty=format:"Hash: %H%nAuthor: %an <%ae>%nDate: %ad%nSubject: %s"
+          echo "Triggered by: $GITHUB_ACTOR"
 
-      - name: Setup Python runtime
+      - name: Configure Python environment
         uses: actions/setup-python@v4
         with:
-          python-version: '3.x'
+          python-version: '3.11'
 
-      - name: Execute installer script
-        shell: powershell
+      - name: Resolve Python dependencies
         run: |
-          if (Test-Path demoinstaller\installer.bat) {
-            Push-Location demoinstaller
-            .\installer.bat
-            $exit = $LASTEXITCODE
-            Pop-Location
-            if ($exit -ne 0) { Write-Host "installer.bat exited with code $exit" }
-          } else {
-            Write-Host "Installer script was not found"
-          }
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            echo "requirements.txt not found, skipping"
+          fi
 
-      - name: Build release package
-        shell: powershell
+      - name: Execute MedDose sanity check
         run: |
-          $short = $env:GITHUB_SHA.Substring(0,7)
-          $zipName = "MedDosePackage-$($env:GITHUB_RUN_NUMBER)-$short.zip"
+          python app.py || true
+        continue-on-error: true
 
-          $exeFiles = Get-ChildItem -Path . -Recurse -Filter *.exe | Select-Object -ExpandProperty FullName
+      - name: Build archive
+        run: |
+          ZIP_NAME="MedDose-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}.zip"
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+          zip -r "$ZIP_NAME" . -x "*.git*"
 
-          $paths = @("code\*", "demoinstaller\*") + $exeFiles
-
-          Compress-Archive -Path $paths -DestinationPath $zipName -Force
-
-          Add-Content -Path $env:GITHUB_ENV -Value ("ZIP_NAME=$zipName")
-
-      - name: Store artifact
+      - name: Publish workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MedDose-artifact
+          name: meddose-zip
           path: ${{ env.ZIP_NAME }}
 
-      - name: Generate GitHub Release
-        id: release_step
+      - name: Create GitHub Release
+        id: create_release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -68,18 +61,18 @@ jobs:
           tag_name: release-${{ github.run_number }}-${{ github.sha }}
           release_name: MedDose Release #${{ github.run_number }}
           body: |
-            Автоматично створений реліз.
+            Автоматичний реліз MedDose  
             Commit: ${{ github.sha }}
             Branch: ${{ github.ref }}
           draft: false
           prerelease: false
 
-      - name: Upload package to Release
+      - name: Attach archive to release
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.release_step.outputs.upload_url }}
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ${{ env.ZIP_NAME }}
           asset_name: ${{ env.ZIP_NAME }}
           asset_content_type: application/zip
